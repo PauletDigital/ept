@@ -27,17 +27,34 @@ table{width:100%;border-collapse:collapse;font-size:.92rem}
 th,td{text-align:right;padding:8px;border-bottom:1px solid var(--line)}th:first-child,td:first-child{text-align:left}
 tr:last-child td,tr:last-child th{border-top:2px solid var(--line)}
 #estado{color:var(--mut);font-size:.85rem}
+.head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
+.btn{font:inherit;font-weight:500;color:#fff;background:var(--acc);border:0;border-radius:6px;padding:9px 14px;cursor:pointer}
+@media (prefers-color-scheme:dark){.btn{color:#10171e}}
+.solo-print{display:none}
+html.imprimir{--bg:#fff;--card:#fff;--ink:#14212e;--mut:#5d6b79;--line:#dbe3ea;--acc:#235496}
+@page{size:A4 portrait;margin:12mm}
+@media print{
+  body{background:#fff}.noprint{display:none!important}.solo-print{display:block}
+  main{max-width:none;padding:0}
+  .panel,.kpi{break-inside:avoid;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  canvas{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}
 </style>
 </head>
 <body>
 <main>
-  <h1>Matrícula por especialidad y grado</h1>
-  <p class="sub">I.E.E. Pedro E. Paulet · <span id="estado">Cargando datos…</span></p>
+  <div class="head">
+    <div>
+      <h1>Matrícula por especialidad y grado</h1>
+      <p class="sub">I.E.E. Pedro E. Paulet · <span id="estado">Cargando datos…</span></p>
+    </div>
+    <button class="btn noprint" id="bPdf" type="button">Imprimir / guardar PDF</button>
+  </div>
+  <p class="solo-print sub" id="resFiltros"></p>
 
-  <section class="panel filtros" aria-label="Filtros">
+  <section class="panel filtros noprint" aria-label="Filtros">
     <div><label for="fEsp">Especialidad</label><select id="fEsp"></select></div>
     <div><label for="fGr">Grado</label><select id="fGr"></select></div>
-    <div><label for="fSec">Sección</label><select id="fSec"></select></div>
     <div><label for="fTur">Turno</label><select id="fTur"></select></div>
     <div><label for="fSex">Sexo</label><select id="fSex">
       <option value="">Todos</option><option value="v">Varones</option><option value="m">Mujeres</option></select></div>
@@ -94,11 +111,11 @@ function parseCSV(t) {
 }
 function aDatos(rows) {
   const h = rows[0].map(norm), ix = k => h.indexOf(k);
-  const falta = ["especialidad", "grado", "seccion", "turno", "varones", "mujeres"].filter(k => ix(k) < 0);
+  const falta = ["especialidad", "grado", "turno", "varones", "mujeres"].filter(k => ix(k) < 0);
   if (falta.length) throw new Error("Faltan columnas en la hoja: " + falta.join(", "));
   return rows.slice(1).filter(r => (r[ix("especialidad")] || "").trim()).map(r => ({
     esp: r[ix("especialidad")].trim(), g: parseInt(r[ix("grado")], 10),
-    sec: (r[ix("seccion")] || "").trim().toUpperCase(), turno: (r[ix("turno")] || "").trim(),
+    turno: (r[ix("turno")] || "").trim(),
     v: +r[ix("varones")] || 0, m: +r[ix("mujeres")] || 0
   })).filter(r => r.g >= 1 && r.g <= 5);
 }
@@ -114,14 +131,16 @@ async function cargar() {
 }
 function demo() {
   let s = 11; const rnd = () => (s = s * 16807 % 2147483647) / 2147483647, out = [];
-  for (let i = 1; i <= 9; i++) for (let g = 1; g <= 5; g++) for (const sec of ["A", "B"])
-    out.push({esp: "Especialidad " + i, g, sec, turno: (i + g) % 3 ? "Mañana" : "Tarde", v: 8 + Math.floor(rnd() * 14), m: 6 + Math.floor(rnd() * 12)});
+  for (let i = 1; i <= 9; i++) for (let g = 1; g <= 5; g++) for (const turno of ["Mañana", "Tarde"]) {
+    if (turno === "Tarde" && (i + g) % 3) continue;
+    out.push({esp: "Especialidad " + i, g, turno, v: 12 + Math.floor(rnd() * 24), m: 8 + Math.floor(rnd() * 20)});
+  }
   return out;
 }
 
 /* ---- Filtros en cascada ---- */
-const F = {esp: "fEsp", g: "fGr", sec: "fSec", turno: "fTur"};
-const ETQ = {esp: "Todas", g: "Todos", sec: "Todas", turno: "Todos"};
+const F = {esp: "fEsp", g: "fGr", turno: "fTur"};
+const ETQ = {esp: "Todas", g: "Todos", turno: "Todos"};
 const filtradas = ex => DATA.filter(r => Object.entries(F).every(([k, id]) => k === ex || !$(id).value || String(r[k]) === $(id).value));
 function llenar() {
   for (const [k, id] of Object.entries(F)) {
@@ -146,13 +165,15 @@ function render() {
   Chart.defaults.font.family = '"IBM Plex Sans", system-ui, sans-serif';
 
   const rows = filtradas(), sx = $("fSex").value;
+  const fl = [["Especialidad", "fEsp"], ["Grado", "fGr"], ["Turno", "fTur"], ["Sexo", "fSex"]]
+    .filter(([, id]) => $(id).value).map(([n, id]) => n + ": " + $(id).selectedOptions[0].text);
+  $("resFiltros").textContent = (fl.length ? "Filtros: " + fl.join(" · ") : "Sin filtros (todos los datos)") + " · Generado el " + new Date().toLocaleDateString("es-PE");
   const val = r => sx === "v" ? r.v : sx === "m" ? r.m : r.v + r.m;
   const T = rows.reduce((s, r) => s + val(r), 0);
   const V = sx === "m" ? 0 : rows.reduce((s, r) => s + r.v, 0), M = sx === "v" ? 0 : rows.reduce((s, r) => s + r.m, 0);
-  const secs = new Set(rows.map(r => [r.esp, r.g, r.sec, r.turno].join("|"))).size;
   const kp = (t, b, k) => `<div class="kpi"><b>${b}</b><span>${t}${k ? " · " + k : ""}</span></div>`;
   $("kpis").innerHTML = kp("Estudiantes", nf(T)) + kp("Varones", nf(V), T ? f1(V / T * 100) + "%" : "") +
-    kp("Mujeres", nf(M), T ? f1(M / T * 100) + "%" : "") + kp("Secciones", nf(secs)) + kp("Promedio por sección", secs ? f1(T / secs) : "0,0");
+    kp("Mujeres", nf(M), T ? f1(M / T * 100) + "%" : "") + kp("Especialidades", nf(new Set(rows.map(r => r.esp)).size));
 
   const esps = [...new Set(rows.map(r => r.esp))].sort((a, b) => a.localeCompare(b, "es"));
   const grs = [...new Set(rows.map(r => r.g))].sort((a, b) => a - b);
@@ -188,6 +209,10 @@ $("fSex").addEventListener("change", render);
 let ancho = innerWidth < 700;
 addEventListener("resize", () => { if ((innerWidth < 700) !== ancho) { ancho = innerWidth < 700; render(); } });
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", render);
+Chart.defaults.animation = false;
+$("bPdf").addEventListener("click", () => window.print());
+addEventListener("beforeprint", () => { document.documentElement.classList.add("imprimir"); render(); });
+addEventListener("afterprint", () => { document.documentElement.classList.remove("imprimir"); render(); });
 cargar().then(() => { llenar(); render(); });
 </script>
 </body>
