@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Matrícula por especialidad y grado · I.E.E. Pedro E. Paulet</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+:root{--bg:#f3f6f9;--card:#fff;--ink:#14212e;--mut:#5d6b79;--line:#dbe3ea;--acc:#235496}
+@media (prefers-color-scheme:dark){:root{--bg:#10171e;--card:#18222c;--ink:#e8eef4;--mut:#93a2b1;--line:#2a3745;--acc:#6c9bd6}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 "IBM Plex Sans",system-ui,sans-serif}
+main{max-width:1100px;margin:0 auto;padding:24px 16px 48px}
+h1{font-size:1.5rem;margin:0 0 4px}h2{font-size:1.05rem;margin:0 0 12px}
+.sub{color:var(--mut);margin:0 0 20px}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px}
+.filtros{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
+label{display:block;font-size:.85rem;color:var(--mut);margin-bottom:4px}
+select{font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:6px;padding:8px;width:100%}
+:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:16px}
+.kpi{background:var(--card);border:1px solid var(--line);border-left:6px solid var(--acc);border-radius:10px;padding:12px 14px}
+.kpi b{display:block;font-size:1.7rem;line-height:1.2}.kpi span{color:var(--mut);font-size:.85rem}
+.chart{position:relative;height:380px}
+.tw{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:.92rem}
+th,td{text-align:right;padding:8px;border-bottom:1px solid var(--line)}th:first-child,td:first-child{text-align:left}
+tr:last-child td,tr:last-child th{border-top:2px solid var(--line)}
+#estado{color:var(--mut);font-size:.85rem}
+</style>
+</head>
+<body>
+<main>
+  <h1>Matrícula por especialidad y grado</h1>
+  <p class="sub">I.E.E. Pedro E. Paulet · <span id="estado">Cargando datos…</span></p>
+
+  <section class="panel filtros" aria-label="Filtros">
+    <div><label for="fEsp">Especialidad</label><select id="fEsp"></select></div>
+    <div><label for="fGr">Grado</label><select id="fGr"></select></div>
+    <div><label for="fSec">Sección</label><select id="fSec"></select></div>
+    <div><label for="fTur">Turno</label><select id="fTur"></select></div>
+    <div><label for="fSex">Sexo</label><select id="fSex">
+      <option value="">Todos</option><option value="v">Varones</option><option value="m">Mujeres</option></select></div>
+  </section>
+
+  <section class="kpis" id="kpis" aria-live="polite"></section>
+
+  <section class="panel">
+    <h2>Estudiantes por especialidad, comparando grados</h2>
+    <div class="chart" id="w1"><canvas id="c1" role="img" aria-label="Barras agrupadas de estudiantes por especialidad y grado"></canvas></div>
+  </section>
+
+  <section class="panel">
+    <h2>Total por grado</h2>
+    <div class="chart" style="height:280px"><canvas id="c2" role="img" aria-label="Barras con el total de estudiantes por grado"></canvas></div>
+  </section>
+
+  <section class="panel tw">
+    <h2>Tabla: especialidad × grado</h2>
+    <table id="tabla"></table>
+  </section>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script>
+/* ========= CONFIGURACIÓN ========= */
+// Pega aquí el enlace CSV de tu hoja "Matricula" (Archivo → Compartir → Publicar en la web → CSV).
+// Vacío = se muestran datos de ejemplo.
+const CSV_URL = "";
+/* ================================== */
+
+const RAMP = ["#9dbde6", "#6c9bd6", "#3b78c3", "#235496", "#12335f"];   // 1.º a 5.º grado
+const $ = id => document.getElementById(id);
+const norm = s => String(s ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const gl = g => g + ".º";
+const f1 = x => x.toLocaleString("es-PE", {maximumFractionDigits: 1, minimumFractionDigits: 1});
+const nf = x => x.toLocaleString("es-PE");
+let DATA = [], c1, c2;
+
+/* ---- CSV ---- */
+function parseCSV(t) {
+  const rows = []; let r = [], c = "", q = false;
+  for (let i = 0; i < t.length; i++) {
+    const ch = t[i];
+    if (q) { if (ch === '"') { if (t[i + 1] === '"') { c += '"'; i++; } else q = false; } else c += ch; }
+    else if (ch === '"') q = true;
+    else if (ch === ",") { r.push(c); c = ""; }
+    else if (ch === "\n" || ch === "\r") { if (ch === "\r" && t[i + 1] === "\n") i++; r.push(c); c = ""; rows.push(r); r = []; }
+    else c += ch;
+  }
+  if (c !== "" || r.length) { r.push(c); rows.push(r); }
+  return rows;
+}
+function aDatos(rows) {
+  const h = rows[0].map(norm), ix = k => h.indexOf(k);
+  const falta = ["especialidad", "grado", "seccion", "turno", "varones", "mujeres"].filter(k => ix(k) < 0);
+  if (falta.length) throw new Error("Faltan columnas en la hoja: " + falta.join(", "));
+  return rows.slice(1).filter(r => (r[ix("especialidad")] || "").trim()).map(r => ({
+    esp: r[ix("especialidad")].trim(), g: parseInt(r[ix("grado")], 10),
+    sec: (r[ix("seccion")] || "").trim().toUpperCase(), turno: (r[ix("turno")] || "").trim(),
+    v: +r[ix("varones")] || 0, m: +r[ix("mujeres")] || 0
+  })).filter(r => r.g >= 1 && r.g <= 5);
+}
+async function cargar() {
+  try {
+    if (!CSV_URL) { DATA = demo(); $("estado").textContent = "datos de ejemplo (configura CSV_URL)"; return; }
+    const t = await (await fetch(CSV_URL + (CSV_URL.includes("?") ? "&" : "?") + "t=" + Date.now())).text();
+    DATA = aDatos(parseCSV(t));
+    $("estado").textContent = DATA.length ? "actualizado " + new Date().toLocaleString("es-PE") : "la hoja no tiene filas válidas";
+  } catch (e) {
+    $("estado").textContent = e.message.startsWith("Faltan") ? e.message : "no se pudieron cargar los datos; revisa el enlace publicado";
+  }
+}
+function demo() {
+  let s = 11; const rnd = () => (s = s * 16807 % 2147483647) / 2147483647, out = [];
+  for (let i = 1; i <= 9; i++) for (let g = 1; g <= 5; g++) for (const sec of ["A", "B"])
+    out.push({esp: "Especialidad " + i, g, sec, turno: (i + g) % 3 ? "Mañana" : "Tarde", v: 8 + Math.floor(rnd() * 14), m: 6 + Math.floor(rnd() * 12)});
+  return out;
+}
+
+/* ---- Filtros en cascada ---- */
+const F = {esp: "fEsp", g: "fGr", sec: "fSec", turno: "fTur"};
+const ETQ = {esp: "Todas", g: "Todos", sec: "Todas", turno: "Todos"};
+const filtradas = ex => DATA.filter(r => Object.entries(F).every(([k, id]) => k === ex || !$(id).value || String(r[k]) === $(id).value));
+function llenar() {
+  for (const [k, id] of Object.entries(F)) {
+    const sel = $(id), cur = sel.value;
+    const vals = [...new Set(filtradas(k).map(r => r[k]))].sort((a, b) => typeof a === "number" ? a - b : String(a).localeCompare(b, "es"));
+    sel.innerHTML = `<option value="">${ETQ[k]}</option>` + vals.map(v => `<option value="${esc(v)}">${k === "g" ? gl(v) : esc(v)}</option>`).join("");
+    sel.value = vals.map(String).includes(cur) ? cur : "";
+  }
+}
+
+/* ---- Gráficos ---- */
+const etiquetas = {id: "etq", afterDatasetsDraw(ch) {
+  const {ctx} = ch; ctx.save(); ctx.font = "600 12px IBM Plex Sans"; ctx.textAlign = "center";
+  ctx.fillStyle = getComputedStyle(document.body).color;
+  ch.getDatasetMeta(0).data.forEach((b, i) => ctx.fillText(nf(ch.data.datasets[0].data[i]), b.x, b.y - 6)); ctx.restore();
+}};
+const wrap = t => { const out = []; let l = ""; t.split(" ").forEach(w => { if ((l + " " + w).trim().length > 14 && l) { out.push(l); l = w; } else l = (l + " " + w).trim(); }); out.push(l); return out; };
+
+function render() {
+  const st = getComputedStyle(document.body);
+  Chart.defaults.color = st.getPropertyValue("--mut"); Chart.defaults.borderColor = st.getPropertyValue("--line");
+  Chart.defaults.font.family = '"IBM Plex Sans", system-ui, sans-serif';
+
+  const rows = filtradas(), sx = $("fSex").value;
+  const val = r => sx === "v" ? r.v : sx === "m" ? r.m : r.v + r.m;
+  const T = rows.reduce((s, r) => s + val(r), 0);
+  const V = sx === "m" ? 0 : rows.reduce((s, r) => s + r.v, 0), M = sx === "v" ? 0 : rows.reduce((s, r) => s + r.m, 0);
+  const secs = new Set(rows.map(r => [r.esp, r.g, r.sec, r.turno].join("|"))).size;
+  const kp = (t, b, k) => `<div class="kpi"><b>${b}</b><span>${t}${k ? " · " + k : ""}</span></div>`;
+  $("kpis").innerHTML = kp("Estudiantes", nf(T)) + kp("Varones", nf(V), T ? f1(V / T * 100) + "%" : "") +
+    kp("Mujeres", nf(M), T ? f1(M / T * 100) + "%" : "") + kp("Secciones", nf(secs)) + kp("Promedio por sección", secs ? f1(T / secs) : "0,0");
+
+  const esps = [...new Set(rows.map(r => r.esp))].sort((a, b) => a.localeCompare(b, "es"));
+  const grs = [...new Set(rows.map(r => r.g))].sort((a, b) => a - b);
+  const mat = {}; esps.forEach(e => mat[e] = {});
+  rows.forEach(r => { mat[r.esp][r.g] = (mat[r.esp][r.g] || 0) + val(r); });
+
+  // Barras agrupadas: especialidad × grado
+  const horiz = innerWidth < 700;
+  $("w1").style.height = (horiz ? Math.max(320, esps.length * (grs.length * 13 + 18) + 90) : 380) + "px";
+  const ds = grs.map(g => ({label: gl(g) + " grado", backgroundColor: RAMP[g - 1], borderRadius: 3, data: esps.map(e => mat[e][g] || 0)}));
+  if (c1) c1.destroy();
+  c1 = new Chart($("c1"), {type: "bar", data: {labels: horiz ? esps : esps.map(wrap), datasets: ds},
+    options: {indexAxis: horiz ? "y" : "x", maintainAspectRatio: false, plugins: {legend: {position: "bottom"}},
+      scales: {[horiz ? "x" : "y"]: {beginAtZero: true, title: {display: true, text: "Estudiantes"}}}}});
+
+  // Total por grado
+  const tg = grs.map(g => rows.filter(r => r.g === g).reduce((s, r) => s + val(r), 0));
+  if (c2) c2.destroy();
+  c2 = new Chart($("c2"), {type: "bar", plugins: [etiquetas],
+    data: {labels: grs.map(gl), datasets: [{data: tg, backgroundColor: grs.map(g => RAMP[g - 1]), borderRadius: 4}]},
+    options: {maintainAspectRatio: false, layout: {padding: {top: 22}}, plugins: {legend: {display: false}},
+      scales: {y: {beginAtZero: true, title: {display: true, text: "Estudiantes"}}}}});
+
+  // Tabla
+  let h = `<tr><th>Especialidad</th>${grs.map(g => `<th>${gl(g)}</th>`).join("")}<th>Total</th></tr>`;
+  esps.forEach(e => { h += `<tr><td>${esc(e)}</td>${grs.map(g => `<td>${nf(mat[e][g] || 0)}</td>`).join("")}<td><b>${nf(grs.reduce((s, g) => s + (mat[e][g] || 0), 0))}</b></td></tr>`; });
+  h += `<tr><th>Total</th>${tg.map(v => `<th>${nf(v)}</th>`).join("")}<th>${nf(T)}</th></tr>`;
+  $("tabla").innerHTML = h;
+}
+
+Object.values(F).forEach(id => $(id).addEventListener("change", () => { llenar(); render(); }));
+$("fSex").addEventListener("change", render);
+let ancho = innerWidth < 700;
+addEventListener("resize", () => { if ((innerWidth < 700) !== ancho) { ancho = innerWidth < 700; render(); } });
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", render);
+cargar().then(() => { llenar(); render(); });
+</script>
+</body>
+</html>
